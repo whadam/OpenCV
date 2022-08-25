@@ -4,8 +4,9 @@
 using namespace std;
 using namespace cv;
 
-Mat g_img;
+Mat g_img, g_src;
 Point g_pointOld;
+Point2f g_srcPts[4], g_dstPts[4];
 
 int main()
 {
@@ -13,8 +14,8 @@ int main()
 
 	Run(iNumber);*/
 
-	Logical();
-	
+	ColorInverse();
+
 	return 0;
 }
 
@@ -543,4 +544,557 @@ void Logical()
 	imshow("dst3", dst3);
 	imshow("dst4", dst4);
 	waitKey();
+}
+
+void FilterEmbossing()
+{
+	Mat src = imread("lenna.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty())
+	{
+		cerr << "image load failed!" << endl;
+		return;
+	}
+
+	float data[] = { -1,-1,0,-1,0,1,0,1,1 };
+	Mat emboss(3, 3, CV_32FC1, data);
+
+	Mat dst;
+	filter2D(src, dst, -1, emboss, Point(-1, -1), 128);
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void BlurringMean()
+{
+	Mat src = imread("rose.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	imshow("src", src);
+
+	Mat dst;
+	for (int ksize = 3; ksize <= 7; ksize += 2) {
+		blur(src, dst, Size(ksize, ksize));
+
+		String desc = format("Mean: %dx%d", ksize, ksize);
+		putText(dst, desc, Point(10, 30), FONT_HERSHEY_SIMPLEX, 1.0,
+			Scalar(255), 1, LINE_AA);
+
+		imshow("dst", dst);
+		waitKey();
+	}
+
+	destroyAllWindows();
+}
+
+void BlurringGaussian()
+{
+	Mat src = imread("rose.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	imshow("src", src);
+
+	Mat dst;
+	for (int sigma = 1; sigma <= 5; sigma++) {
+		GaussianBlur(src, dst, Size(0, 0), (double)sigma);
+
+		String desc = format("Gaussian: sigma = %d", sigma);
+		putText(dst, desc, Point(10, 30), FONT_HERSHEY_SIMPLEX, 1.0,
+			Scalar(255), 1, LINE_AA);
+
+		imshow("dst", dst);
+		waitKey();
+	}
+
+	destroyAllWindows();
+}
+
+void UnsharpMask()
+{
+	Mat src = imread("rose.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	imshow("src", src);
+
+	for (int sigma = 1; sigma <= 5; sigma++) {
+		Mat blurred;
+		GaussianBlur(src, blurred, Size(), sigma);
+
+		float alpha = 1.f;
+		Mat dst = (1 + alpha) * src - alpha * blurred;
+
+		String desc = format("sigma: %d", sigma);
+		putText(dst, desc, Point(10, 30), FONT_HERSHEY_SIMPLEX, 1.0,
+			Scalar(255), 1, LINE_AA);
+
+		imshow("dst", dst);
+		waitKey();
+	}
+
+	destroyAllWindows();
+}
+
+void NoiseGaussian()
+{
+	Mat src = imread("lenna.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	imshow("src", src);
+
+	for (int stddev = 10; stddev <= 30; stddev += 10) {
+		Mat noise(src.size(), CV_32SC1);
+		randn(noise, 0, stddev);
+
+		Mat dst;
+		add(src, noise, dst, Mat(), CV_8U);
+
+		String desc = format("stddev = %d", stddev);
+		putText(dst, desc, Point(10, 30), FONT_HERSHEY_SIMPLEX, 1.0, Scalar(255), 1, LINE_AA);
+		imshow("dst", dst);
+		waitKey();
+	}
+
+	destroyAllWindows();
+}
+
+void FilterBilateral()
+{
+	Mat src = imread("lenna.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat noise(src.size(), CV_32SC1);
+	randn(noise, 0, 10);
+	add(src, noise, src, Mat(), CV_8U);
+
+	Mat dst1;
+	GaussianBlur(src, dst1, Size(), 5);
+
+	Mat dst2;
+	bilateralFilter(src, dst2, -1, 10, 5);
+
+	imshow("src", src);
+	imshow("dst1", dst1);
+	imshow("dst2", dst2);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void FilterMedian()
+{
+	Mat src = imread("lenna.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	int num = (int)(src.total() * 0.1);
+	for (int i = 0; i < num; i++) {
+		int x = rand() % src.cols;
+		int y = rand() % src.rows;
+		src.at<uchar>(y, x) = (i % 2) * 255;
+	}
+
+	Mat dst1;
+	GaussianBlur(src, dst1, Size(), 1);
+
+	Mat dst2;
+	medianBlur(src, dst2, 3);
+
+	imshow("src", src);
+	imshow("dst1", dst1);
+	imshow("dst2", dst2);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void AffineTransform()
+{
+	Mat src = imread("tekapo.bmp");
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Point2f srcPts[3], dstPts[3];
+	srcPts[0] = Point2f(0, 0);
+	srcPts[1] = Point2f(src.cols - 1, 0);
+	srcPts[2] = Point2f(src.cols - 1, src.rows - 1);
+	dstPts[0] = Point2f(50, 50);
+	dstPts[1] = Point2f(src.cols - 100, 100);
+	dstPts[2] = Point2f(src.cols - 50, src.rows - 50);
+
+	Mat M = getAffineTransform(srcPts, dstPts);
+
+	Mat dst;
+	warpAffine(src, dst, M, Size());
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void AffineTranslation()
+{
+	Mat src = imread("tekapo.bmp");
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat M = Mat_<double>({ 2, 3 }, { 1, 0, 150, 0, 1, 100 });
+
+	Mat dst;
+	warpAffine(src, dst, M, Size());
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void AffineShear()
+{
+	Mat src = imread("tekapo.bmp");
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	double mx = 0.3;
+	Mat M = Mat_<double>({ 2, 3 }, { 1, mx, 0, 0, 1, 0 });
+	//Mat M = Mat_<double>({ 2, 3 }, { 1, -mx, (double)src.rows * mx, 0, 1, 0 });
+
+	Mat dst;
+	warpAffine(src, dst, M, Size(cvRound(src.cols + src.rows * mx), src.rows));
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void AffineScale()
+{
+	Mat src = imread("rose.bmp");
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat dst1, dst2, dst3, dst4;
+	resize(src, dst1, Size(), 4, 4, INTER_NEAREST);
+	resize(src, dst2, Size(1920, 1280));
+	resize(src, dst3, Size(1920, 1280), 0, 0, INTER_CUBIC);
+	resize(src, dst4, Size(1920, 1280), 0, 0, INTER_LANCZOS4);
+
+	imshow("src", src);
+	imshow("dst1", dst1(Rect(400, 500, 400, 400)));
+	imshow("dst2", dst2(Rect(400, 500, 400, 400)));
+	imshow("dst3", dst3(Rect(400, 500, 400, 400)));
+	imshow("dst4", dst4(Rect(400, 500, 400, 400)));
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void AffineRotation()
+{
+	Mat src = imread("tekapo.bmp");
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Point2f cp(src.cols / 2.f, src.rows / 2.f);
+	Mat M = getRotationMatrix2D(cp, 20, 1);
+
+	Mat dst;
+	warpAffine(src, dst, M, Size());
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void AffineFlip()
+{
+	Mat src = imread("eastsea.bmp");
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	imshow("src", src);
+
+	Mat dst;
+	int flipCode[] = { 1, 0, -1 };
+	for (int i = 0; i < 3; i++) {
+		flip(src, dst, flipCode[i]);
+
+		String desc = format("flipCode: %d", flipCode[i]);
+		putText(dst, desc, Point(10, 30), FONT_HERSHEY_SIMPLEX, 1.0, Scalar(255, 0, 0), 1, LINE_AA);
+
+		imshow("dst", dst);
+		waitKey();
+	}
+
+	destroyAllWindows();
+}
+
+void OnMouse2(int event, int x, int y, int flags, void* userdata)
+{
+	static int cnt = 0;
+
+	if (event == EVENT_LBUTTONDOWN) {
+		if (cnt < 4) {
+			g_srcPts[cnt++] = Point2f(x, y);
+
+			circle(g_src, Point(x, y), 5, Scalar(0, 0, 255), -1);
+			imshow("src", g_src);
+
+			if (cnt == 4) {
+				int w = 200, h = 300;
+
+				g_dstPts[0] = Point2f(0, 0);
+				g_dstPts[1] = Point2f(w - 1, 0);
+				g_dstPts[2] = Point2f(w - 1, h - 1);
+				g_dstPts[3] = Point2f(0, h - 1);
+
+				Mat pers = getPerspectiveTransform(g_srcPts, g_dstPts);
+
+				Mat dst;
+				warpPerspective(g_src, dst, pers, Size(w, h));
+
+				imshow("dst", dst);
+			}
+		}
+	}
+}
+
+void Perspective()
+{
+	g_src = imread("card.bmp");
+
+	if (g_src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	namedWindow("src");
+	setMouseCallback("src", OnMouse2);
+
+	imshow("src", g_src);
+	waitKey(0);
+}
+
+void SobelEdge()
+{
+	Mat src = imread("lenna.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat dx, dy;
+	Sobel(src, dx, CV_32FC1, 1, 0);
+	Sobel(src, dy, CV_32FC1, 0, 1);
+
+	Mat fmag, mag;
+	magnitude(dx, dy, fmag);
+	fmag.convertTo(mag, CV_8UC1);
+
+	Mat edge = mag > 150;
+
+	imshow("src", src);
+	imshow("mag", mag);
+	imshow("edge", edge);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void CannyEdge()
+{
+	Mat src = imread("lenna.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat dst1, dst2;
+	Canny(src, dst1, 50, 100);
+	Canny(src, dst2, 50, 150);
+
+	imshow("src", src);
+	imshow("dst1", dst1);
+	imshow("dst2", dst2);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void HoughLines()
+{
+	Mat src = imread("building.jpg", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat edge;
+	Canny(src, edge, 50, 150);
+
+	vector<Vec2f> lines;
+	HoughLines(edge, lines, 1, CV_PI / 180, 250);
+
+	Mat dst;
+	cvtColor(edge, dst, COLOR_GRAY2BGR);
+
+	for (size_t i = 0; i < lines.size(); i++) {
+		float rho = lines[i][0], theta = lines[i][1];
+		float cos_t = cos(theta), sin_t = sin(theta);
+		float x0 = rho * cos_t, y0 = rho * sin_t;
+		float alpha = 1000;
+
+		Point pt1(cvRound(x0 - alpha * sin_t), cvRound(y0 + alpha * cos_t));
+		Point pt2(cvRound(x0 + alpha * sin_t), cvRound(y0 - alpha * cos_t));
+		line(dst, pt1, pt2, Scalar(0, 0, 255), 2, LINE_AA);
+	}
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey(0);
+	destroyAllWindows();
+}
+
+void HoughLineSegments()
+{
+	Mat src = imread("building.jpg", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat edge;
+	Canny(src, edge, 50, 150);
+
+	vector<Vec4i> lines;
+	HoughLinesP(edge, lines, 1, CV_PI / 180, 160, 50, 5);
+
+	Mat dst;
+	cvtColor(edge, dst, COLOR_GRAY2BGR);
+
+	for (Vec4i l : lines) {
+		line(dst, Point(l[0], l[1]), Point(l[2], l[3]), Scalar(0, 0, 255), 2, LINE_AA);
+	}
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey(0);
+	destroyAllWindows();
+}
+
+void HoughCircles()
+{
+	Mat src = imread("coins.png", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat blurred;
+	blur(src, blurred, Size(3, 3));
+
+	vector<Vec3f> circles;
+	HoughCircles(blurred, circles, HOUGH_GRADIENT, 1, 50, 150, 30);
+
+	Mat dst;
+	cvtColor(src, dst, COLOR_GRAY2BGR);
+
+	for (Vec3f c : circles) {
+		Point center(cvRound(c[0]), cvRound(c[1]));
+		int radius = cvRound(c[2]);
+		circle(dst, center, radius, Scalar(0, 0, 255), 2, LINE_AA);
+	}
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey(0);
+	destroyAllWindows();
+}
+
+void ColorInverse()
+{
+	Mat src = imread("butterfly.jpg", IMREAD_COLOR);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat dst(src.rows, src.cols, src.type());
+
+	for (int j = 0; j < src.rows; j++) {
+		for (int i = 0; i < src.cols; i++) {
+			Vec3b& p1 = src.at<Vec3b>(j, i);
+			Vec3b& p2 = dst.at<Vec3b>(j, i);
+
+			p2[0] = 255 - p1[0]; // B
+			p2[1] = 255 - p1[1]; // G
+			p2[2] = 255 - p1[2]; // R
+		}
+	}
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey();
+	destroyAllWindows();
 }
