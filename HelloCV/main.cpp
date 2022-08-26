@@ -4,17 +4,18 @@
 using namespace std;
 using namespace cv;
 
-Mat g_img, g_src;
+Mat g_img, g_src, g_src_hsv, g_mask;
 Point g_pointOld;
 Point2f g_srcPts[4], g_dstPts[4];
+int g_nLowerHue = 40, g_nUpperHue = 50;
 
-int main()
+int main(int argc, char* argv[])
 {
 	/*int iNumber = GetNumber();
 
 	Run(iNumber);*/
-
-	ColorInverse();
+	
+	Stitching(argc, argv);
 
 	return 0;
 }
@@ -1097,4 +1098,854 @@ void ColorInverse()
 
 	waitKey();
 	destroyAllWindows();
+}
+
+void ColorGrayscale()
+{
+	Mat src = imread("butterfly.jpg");
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat dst;
+	cvtColor(src, dst, COLOR_BGR2GRAY);
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void ColorSplit()
+{
+	Mat src = imread("candies.png");
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	vector<Mat> bgr_planes;
+	split(src, bgr_planes);
+
+	imshow("src", src);
+	imshow("B_plane", bgr_planes[0]);
+	imshow("G_plane", bgr_planes[1]);
+	imshow("R_plane", bgr_planes[2]);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void ColorEqHist()
+{
+	Mat src = imread("pepper.bmp", IMREAD_COLOR);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat src_ycrcb;
+	cvtColor(src, src_ycrcb, COLOR_BGR2YCrCb);
+
+	vector<Mat> ycrcb_planes;
+	split(src_ycrcb, ycrcb_planes);
+
+	equalizeHist(ycrcb_planes[0], ycrcb_planes[0]); // Y channel
+
+	Mat dst_ycrcb;
+	merge(ycrcb_planes, dst_ycrcb);
+
+	Mat dst;
+	cvtColor(dst_ycrcb, dst, COLOR_YCrCb2BGR);
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey(0);
+}
+
+void InRange()
+{
+	g_src = imread("candies.png", IMREAD_COLOR);
+
+	if (g_src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	cvtColor(g_src, g_src_hsv, COLOR_BGR2HSV);
+
+	imshow("src", g_src);
+
+	namedWindow("mask");
+	createTrackbar("Lower Hue", "mask", &g_nLowerHue, 179, OnHueChanged);
+	createTrackbar("Upper Hue", "mask", &g_nUpperHue, 179, OnHueChanged);
+	OnHueChanged(0, 0);
+
+	waitKey(0);
+}
+
+void OnHueChanged(int, void*)
+{
+	Scalar lowerb(g_nLowerHue, 100, 0);
+	Scalar upperb(g_nUpperHue, 255, 255);
+	inRange(g_src_hsv, lowerb, upperb, g_mask);
+
+	imshow("mask", g_mask);
+}
+
+void BackProject()
+{
+	// Calculate CrCb histogram from a reference image
+
+	Mat ref, ref_ycrcb, mask;
+	ref = imread("ref.png", IMREAD_COLOR);
+	mask = imread("mask.bmp", IMREAD_GRAYSCALE);
+	cvtColor(ref, ref_ycrcb, COLOR_BGR2YCrCb);
+
+	Mat hist;
+	int channels[] = { 1, 2 };
+	int cr_bins = 128; int cb_bins = 128;
+	int histSize[] = { cr_bins, cb_bins };
+	float cr_range[] = { 0, 256 };
+	float cb_range[] = { 0, 256 };
+	const float* ranges[] = { cr_range, cb_range };
+
+	calcHist(&ref_ycrcb, 1, channels, mask, hist, 2, histSize, ranges);
+
+	// Apply histogram backprojection to an input image
+
+	Mat src, src_ycrcb;
+	src = imread("kids.png", IMREAD_COLOR);
+	cvtColor(src, src_ycrcb, COLOR_BGR2YCrCb);
+
+	Mat backproj;
+	calcBackProject(&src_ycrcb, 1, channels, hist, backproj, ranges, 1, true);
+
+	imshow("src", src);
+	imshow("backproj", backproj);
+	waitKey(0);
+}
+
+void Binarize(int argc, char* argv[])
+{
+	Mat src;
+
+	if (argc < 2)
+		src = imread("neutrophils.png", IMREAD_GRAYSCALE);
+	else
+		src = imread(argv[1], IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	imshow("src", src);
+
+	namedWindow("dst");
+	createTrackbar("Threshold", "dst", 0, 255, OnThreshold, (void*)&src);
+	setTrackbarPos("Threshold", "dst", 128);
+
+	waitKey(0);
+}
+
+void OnThreshold(int pos, void* userdata)
+{
+	Mat src = *(Mat*)userdata;
+
+	Mat dst;
+	threshold(src, dst, pos, 255, THRESH_BINARY);
+
+	imshow("dst", dst);
+}
+
+void Adaptive()
+{
+	Mat src = imread("sudoku.jpg", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	imshow("src", src);
+
+	namedWindow("dst");
+	createTrackbar("Block Size", "dst", 0, 200, OnTrackbar, (void*)&src);
+	setTrackbarPos("Block Size", "dst", 11);
+
+	waitKey(0);
+}
+
+void OnTrackbar(int pos, void* userdata)
+{
+	Mat src = *(Mat*)userdata;
+
+	int bsize = pos;
+	if (bsize % 2 == 0) bsize--;
+	if (bsize < 3) bsize = 3;
+
+	Mat dst;
+	adaptiveThreshold(src, dst, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY, bsize, 2);
+
+	imshow("dst", dst);
+}
+
+void ErodeDilate()
+{
+	Mat src = imread("milkdrop.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat bin;
+	threshold(src, bin, 0, 255, THRESH_BINARY | THRESH_OTSU);
+
+	Mat dst1, dst2;
+	erode(bin, dst1, Mat());
+	dilate(bin, dst2, Mat());
+
+	imshow("src", src);
+	imshow("bin", bin);
+	imshow("erode", dst1);
+	imshow("dilate", dst2);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void OpenClose()
+{
+	Mat src = imread("milkdrop.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat bin;
+	threshold(src, bin, 0, 255, THRESH_BINARY | THRESH_OTSU);
+
+	Mat dst1, dst2;
+	morphologyEx(bin, dst1, MORPH_OPEN, Mat());
+	morphologyEx(bin, dst2, MORPH_CLOSE, Mat());
+
+	imshow("src", src);
+	imshow("bin", bin);
+	imshow("opening", dst1);
+	imshow("closing", dst2);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void LabelingBasic()
+{
+	uchar data[] = {
+		0, 0, 1, 1, 0, 0, 0, 0,
+		1, 1, 1, 1, 0, 0, 1, 0,
+		1, 1, 1, 1, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 1, 1, 0,
+		0, 0, 0, 1, 1, 1, 1, 0,
+		0, 0, 0, 1, 0, 0, 1, 0,
+		0, 0, 1, 1, 1, 1, 1, 0,
+		0, 0, 0, 0, 0, 0, 0, 0,
+	};
+
+	Mat src = Mat(8, 8, CV_8UC1, data) * 255;
+
+	Mat labels;
+	int cnt = connectedComponents(src, labels);
+	
+	cout << "src:\n" << src << endl;
+	cout << "labels:\n" << labels << endl;
+	cout << "number of labels: " << cnt << endl;
+}
+
+void LabelingStats()
+{
+	Mat src = imread("keyboard.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat bin;
+	threshold(src, bin, 0, 255, THRESH_BINARY | THRESH_OTSU);
+
+	Mat labels, stats, centroids;
+	int cnt = connectedComponentsWithStats(bin, labels, stats, centroids);
+
+	Mat dst;
+	cvtColor(src, dst, COLOR_GRAY2BGR);
+
+	for (int i = 1; i < cnt; i++) {
+		int* p = stats.ptr<int>(i);
+
+		if (p[4] < 20) continue;
+
+		rectangle(dst, Rect(p[0], p[1], p[2], p[3]), Scalar(0, 255, 255));
+	}
+
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void ContoursBasic()
+{
+	Mat src = imread("contours.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	vector<vector<Point>> contours;
+	findContours(src, contours, RETR_LIST, CHAIN_APPROX_NONE);
+
+	Mat dst;
+	cvtColor(src, dst, COLOR_GRAY2BGR);
+
+	for (int i = 0; i < contours.size(); i++) {
+		Scalar c(rand() & 255, rand() & 255, rand() & 255);
+		drawContours(dst, contours, i, c, 2);
+	}
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey(0);
+	destroyAllWindows();
+}
+
+void ContoursHier()
+{
+	Mat src = imread("contours.bmp", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	vector<vector<Point> > contours;
+	vector<Vec4i> hierarchy;
+	findContours(src, contours, hierarchy, RETR_CCOMP, CHAIN_APPROX_SIMPLE);
+
+	Mat dst;
+	cvtColor(src, dst, COLOR_GRAY2BGR);
+
+	for (int idx = 0; idx >= 0; idx = hierarchy[idx][0]) {
+		Scalar c(rand() & 255, rand() & 255, rand() & 255);
+		drawContours(dst, contours, idx, c, -1, LINE_8, hierarchy);
+	}
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey(0);
+	destroyAllWindows();
+}
+
+void SetLabel(Mat& img, const vector<Point>& pts, const String& label)
+{
+	Rect rc = boundingRect(pts);
+	rectangle(img, rc, Scalar(0, 0, 255), 1);
+	putText(img, label, rc.tl(), FONT_HERSHEY_PLAIN, 1, Scalar(0, 0, 255));
+}
+
+void Polygon()
+{
+	Mat img = imread("polygon.bmp", IMREAD_COLOR);
+
+	if (img.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat gray;
+	cvtColor(img, gray, COLOR_BGR2GRAY);
+
+	Mat bin;
+	threshold(gray, bin, 200, 255, THRESH_BINARY_INV | THRESH_OTSU);
+
+	vector<vector<Point>> contours;
+	findContours(bin, contours, RETR_EXTERNAL, CHAIN_APPROX_NONE);
+
+	for (vector<Point> pts : contours) {
+		if (contourArea(pts) < 400)
+			continue;
+
+		vector<Point> approx;
+		approxPolyDP(pts, approx, arcLength(pts, true) * 0.02, true);
+
+		int vtc = (int)approx.size();
+
+		if (vtc == 3) {
+			SetLabel(img, pts, "TRI");
+		}
+		else if (vtc == 4) {
+			SetLabel(img, pts, "RECT");
+		}
+		else {
+			double len = arcLength(pts, true);
+			double area = contourArea(pts);
+			double ratio = 4. * CV_PI * area / (len * len);
+
+			if (ratio > 0.85) {
+				SetLabel(img, pts, "CIR");
+			}
+		}
+	}
+
+	imshow("img", img);
+
+	waitKey(0);
+}
+
+void TemplateMatching()
+{
+	Mat img = imread("circuit.bmp", IMREAD_COLOR);
+	Mat templ = imread("crystal.bmp", IMREAD_COLOR);
+
+	if (img.empty() || templ.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	img = img + Scalar(50, 50, 50);
+
+	Mat noise(img.size(), CV_32SC3);
+	randn(noise, 0, 10);
+	add(img, noise, img, Mat(), CV_8UC3);
+
+	Mat res, res_norm;
+	matchTemplate(img, templ, res, TM_CCOEFF_NORMED);
+	normalize(res, res_norm, 0, 255, NORM_MINMAX, CV_8U);
+
+	double maxv;
+	Point maxloc;
+	minMaxLoc(res, 0, &maxv, 0, &maxloc);
+	cout << "maxv: " << maxv << endl;
+
+	rectangle(img, Rect(maxloc.x, maxloc.y, templ.cols, templ.rows), Scalar(0, 0, 255), 2);
+
+	imshow("templ", templ);
+	imshow("res_norm", res_norm);
+	imshow("img", img);
+
+	waitKey(0);
+	destroyAllWindows();
+}
+
+void DetectFace()
+{
+	Mat src = imread("kids.png");
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	CascadeClassifier classifier("haarcascade_frontalface_default.xml");
+
+	if (classifier.empty()) {
+		cerr << "XML load failed!" << endl;
+		return;
+	}
+
+	vector<Rect> faces;
+	classifier.detectMultiScale(src, faces);
+
+	for (Rect rc : faces) {
+		rectangle(src, rc, Scalar(255, 0, 255), 2);
+	}
+
+	imshow("src", src);
+
+	waitKey(0);
+	destroyAllWindows();
+}
+
+void DetectEyes()
+{
+	Mat src = imread("kids.png");
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	CascadeClassifier face_classifier("haarcascade_frontalface_default.xml");
+	CascadeClassifier eye_classifier("haarcascade_eye.xml");
+
+	if (face_classifier.empty() || eye_classifier.empty()) {
+		cerr << "XML load failed!" << endl;
+		return;
+	}
+
+	vector<Rect> faces;
+	face_classifier.detectMultiScale(src, faces);
+
+	for (Rect face : faces) {
+		rectangle(src, face, Scalar(255, 0, 255), 2);
+
+		Mat faceROI = src(face);
+		vector<Rect> eyes;
+		eye_classifier.detectMultiScale(faceROI, eyes);
+
+		for (Rect eye : eyes) {
+			Point center(eye.x + eye.width / 2, eye.y + eye.height / 2);
+			circle(faceROI, center, eye.width / 2, Scalar(255, 0, 0), 2, LINE_AA);
+		}
+	}
+
+	imshow("src", src);
+
+	waitKey(0);
+	destroyAllWindows();
+}
+
+void Hog()
+{
+	VideoCapture cap("vtest.avi");
+
+	if (!cap.isOpened()) {
+		cerr << "Video open failed!" << endl;
+		return;
+	}
+
+	HOGDescriptor hog;
+	hog.setSVMDetector(HOGDescriptor::getDefaultPeopleDetector());
+
+	Mat frame;
+	while (true) {
+		cap >> frame;
+		if (frame.empty())
+			break;
+
+		vector<Rect> detected;
+		hog.detectMultiScale(frame, detected);
+
+		for (Rect r : detected) {
+			Scalar c = Scalar(rand() % 256, rand() % 256, rand() % 256);
+			rectangle(frame, r, c, 3);
+		}
+
+		imshow("frame", frame);
+
+		if (waitKey(10) == 27)
+			break;
+	}
+}
+
+void DecodeQRCode()
+{
+	VideoCapture cap(0);
+
+	if (!cap.isOpened()) {
+		cerr << "Camera open failed!" << endl;
+		return;
+	}
+
+	QRCodeDetector detector;
+
+	Mat frame;
+	while (true) {
+		cap >> frame;
+
+		if (frame.empty()) {
+			cerr << "Frame load failed!" << endl;
+			break;
+		}
+
+		vector<Point> points;
+		String info = detector.detectAndDecode(frame, points);
+
+		if (!info.empty()) {
+			polylines(frame, points, true, Scalar(0, 0, 255), 2);
+			putText(frame, info, Point(10, 30), FONT_HERSHEY_DUPLEX, 1, Scalar(0, 0, 255));
+		}
+
+		imshow("frame", frame);
+		if (waitKey(1) == 27)
+			break;
+	}
+}
+
+void CornerHarris()
+{
+	Mat src = imread("building.jpg", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Mat harris;
+	cornerHarris(src, harris, 3, 3, 0.04);
+
+	Mat harris_norm;
+	normalize(harris, harris_norm, 0, 255, NORM_MINMAX, CV_8U);
+
+	Mat dst;
+	cvtColor(src, dst, COLOR_GRAY2BGR);
+
+	for (int j = 1; j < harris.rows - 1; j++) {
+		for (int i = 1; i < harris.cols - 1; i++) {
+			if (harris_norm.at<uchar>(j, i) > 120) {
+				if (harris.at<float>(j, i) > harris.at<float>(j - 1, i) &&
+					harris.at<float>(j, i) > harris.at<float>(j + 1, i) &&
+					harris.at<float>(j, i) > harris.at<float>(j, i - 1) &&
+					harris.at<float>(j, i) > harris.at<float>(j, i + 1)) {
+					circle(dst, Point(i, j), 5, Scalar(0, 0, 255), 2);
+				}
+			}
+		}
+	}
+
+	imshow("src", src);
+	imshow("harris_norm", harris_norm);
+	imshow("dst", dst);
+
+	waitKey(0);
+	destroyAllWindows();
+}
+
+void CornerFAST()
+{
+	Mat src = imread("building.jpg", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	vector<KeyPoint> keypoints;
+	FAST(src, keypoints, 60, true);
+
+	Mat dst;
+	cvtColor(src, dst, COLOR_GRAY2BGR);
+
+	for (KeyPoint kp : keypoints) {
+		Point pt(cvRound(kp.pt.x), cvRound(kp.pt.y));
+		circle(dst, pt, 5, Scalar(0, 0, 255), 2);
+	}
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey(0);
+	destroyAllWindows();
+}
+
+void DetectKeypoints()
+{
+	Mat src = imread("box_in_scene.png", IMREAD_GRAYSCALE);
+
+	if (src.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Ptr<Feature2D> feature = ORB::create();
+
+	vector<KeyPoint> keypoints;
+	feature->detect(src, keypoints);
+
+	Mat desc;
+	feature->compute(src, keypoints, desc);
+
+	/* same code
+	vector<KeyPoint> keypoints;
+	Mat desc;
+	feature->detectAndCompute(src, Mat(), keypoints, desc);
+	*/
+
+	cout << "keypoints.size(): " << keypoints.size() << endl;
+	cout << "desc.size(): " << desc.size() << endl;
+
+	Mat dst;
+	drawKeypoints(src, keypoints, dst, Scalar::all(-1), DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
+
+	imshow("src", src);
+	imshow("dst", dst);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void KeypointMatching()
+{
+	Mat src1 = imread("box.png", IMREAD_GRAYSCALE);
+	Mat src2 = imread("box_in_scene.png", IMREAD_GRAYSCALE);
+
+	if (src1.empty() || src2.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Ptr<Feature2D> feature = ORB::create();
+
+	vector<KeyPoint> keypoints1, keypoints2;
+	Mat desc1, desc2;
+	feature->detectAndCompute(src1, Mat(), keypoints1, desc1);
+	feature->detectAndCompute(src2, Mat(), keypoints2, desc2);
+	cout << "desc1.size(): " << desc1.size() << endl;
+	cout << "desc2.size(): " << desc2.size() << endl;
+
+	Ptr<DescriptorMatcher> matcher = BFMatcher::create(NORM_HAMMING);
+
+	vector<DMatch> matches;
+	matcher->match(desc1, desc2, matches);
+
+	Mat dst;
+	drawMatches(src1, keypoints1, src2, keypoints2, matches, dst);
+
+	imshow("dst", dst);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void GoodMatching()
+{
+	Mat src1 = imread("box.png", IMREAD_GRAYSCALE);
+	Mat src2 = imread("box_in_scene.png", IMREAD_GRAYSCALE);
+
+	if (src1.empty() || src2.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Ptr<Feature2D> feature = ORB::create();
+
+	vector<KeyPoint> keypoints1, keypoints2;
+	Mat desc1, desc2;
+	feature->detectAndCompute(src1, Mat(), keypoints1, desc1);
+	feature->detectAndCompute(src2, Mat(), keypoints2, desc2);
+
+	Ptr<DescriptorMatcher> matcher = BFMatcher::create(NORM_HAMMING);
+
+	vector<DMatch> matches;
+	matcher->match(desc1, desc2, matches);
+
+	std::sort(matches.begin(), matches.end());
+	vector<DMatch> good_matches(matches.begin(), matches.begin() + 50);
+
+	Mat dst;
+	drawMatches(src1, keypoints1, src2, keypoints2, good_matches, dst,
+		Scalar::all(-1), Scalar::all(-1), vector<char>(),
+		DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+
+	imshow("dst", dst);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void FindHomography()
+{
+	Mat src1 = imread("box.png", IMREAD_GRAYSCALE);
+	Mat src2 = imread("box_in_scene.png", IMREAD_GRAYSCALE);
+
+	if (src1.empty() || src2.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	Ptr<Feature2D> feature = ORB::create();
+
+	vector<KeyPoint> keypoints1, keypoints2;
+	Mat desc1, desc2;
+	feature->detectAndCompute(src1, Mat(), keypoints1, desc1);
+	feature->detectAndCompute(src2, Mat(), keypoints2, desc2);
+
+	Ptr<DescriptorMatcher> matcher = BFMatcher::create(NORM_HAMMING);
+
+	vector<DMatch> matches;
+	matcher->match(desc1, desc2, matches);
+
+	std::sort(matches.begin(), matches.end());
+	vector<DMatch> good_matches(matches.begin(), matches.begin() + 50);
+
+	Mat dst;
+	drawMatches(src1, keypoints1, src2, keypoints2, good_matches, dst,
+		Scalar::all(-1), Scalar::all(-1), vector<char>(),
+		DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+
+	vector<Point2f> pts1, pts2;
+	for (size_t i = 0; i < good_matches.size(); i++) {
+		pts1.push_back(keypoints1[good_matches[i].queryIdx].pt);
+		pts2.push_back(keypoints2[good_matches[i].trainIdx].pt);
+	}
+
+	Mat H = findHomography(pts1, pts2, RANSAC);
+
+	vector<Point2f> corners1, corners2;
+	corners1.push_back(Point2f(0, 0));
+	corners1.push_back(Point2f(src1.cols - 1.f, 0));
+	corners1.push_back(Point2f(src1.cols - 1.f, src1.rows - 1.f));
+	corners1.push_back(Point2f(0, src1.rows - 1.f));
+	perspectiveTransform(corners1, corners2, H);
+
+	vector<Point> corners_dst;
+	for (Point2f pt : corners2) {
+		corners_dst.push_back(Point(cvRound(pt.x + src1.cols), cvRound(pt.y)));
+	}
+
+	polylines(dst, corners_dst, true, Scalar(0, 255, 0), 2, LINE_AA);
+
+	imshow("dst", dst);
+
+	waitKey();
+	destroyAllWindows();
+}
+
+void Stitching(int argc, char* argv[])
+{
+	if (argc < 3) {
+		cerr << "Usage: stitching.exe <image_file1> <image_file2> [<image_file3> ...]" << endl;
+		return;
+	}
+
+	vector<Mat> imgs;
+	for (int i = 1; i < argc; i++) {
+		Mat img = imread(argv[i]);
+
+		if (img.empty()) {
+			cerr << "Image load failed!" << endl;
+			return;
+		}
+
+		imgs.push_back(img);
+	}
+
+	Ptr<Stitcher> stitcher = Stitcher::create();
+
+	Mat dst;
+	Stitcher::Status status = stitcher->stitch(imgs, dst);
+
+	if (status != Stitcher::Status::OK) {
+		cerr << "Error on stitching!" << endl;
+		return;
+	}
+
+	imwrite("result.jpg", dst);
+
+	imshow("dst", dst);
+
+	waitKey();
 }

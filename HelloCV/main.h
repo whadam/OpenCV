@@ -1,5 +1,6 @@
 #pragma once
 #include "opencv2/opencv.hpp"
+#include <vector>
 
 using namespace cv;
 
@@ -66,3 +67,41 @@ void HoughCircles();
 
 // Color
 void ColorInverse();
+void ColorGrayscale();
+void ColorSplit();
+void ColorEqHist();
+void InRange();
+void OnHueChanged(int, void*);
+void BackProject();
+
+// Binarize & Morphology
+void Binarize(int argc, char* argv[]);
+void OnThreshold(int, void*);
+void Adaptive();
+void OnTrackbar(int pos, void* userdata);
+void ErodeDilate();
+void OpenClose();
+
+// Labeling & Contour Detect
+void LabelingBasic();
+void LabelingStats();
+void ContoursBasic();
+void ContoursHier();
+void SetLabel(Mat&, const std::vector<Point>&, const String&);
+void Polygon();
+
+// Object Detect
+void TemplateMatching();
+void DetectFace();
+void DetectEyes();
+void Hog();
+void DecodeQRCode();
+
+// Feature point Detect and Matching (keypoint, interest point)
+void CornerHarris();
+void CornerFAST();
+void DetectKeypoints();
+void KeypointMatching();
+void GoodMatching();
+void FindHomography();
+void Stitching(int argc, char* argv[]);
