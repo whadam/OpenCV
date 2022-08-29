@@ -1,13 +1,22 @@
 #include <iostream>
+#include <fstream>
 #include "main.h"
 
 using namespace std;
 using namespace cv;
+using namespace cv::ml;
+using namespace cv::dnn;
 
-Mat g_img, g_src, g_src_hsv, g_mask;
+Mat g_img, g_src, g_src_hsv, g_mask, train, label;
+Ptr<KNearest> knn;
 Point g_pointOld;
 Point2f g_srcPts[4], g_dstPts[4];
-int g_nLowerHue = 40, g_nUpperHue = 50;
+int g_nLowerHue = 40, g_nUpperHue = 50, k_value = 1;
+
+//const String model = "res10_300x300_ssd_iter_140000_fp16.caffemodel";
+//const String config = "deploy.prototxt";
+const String model = "opencv_face_detector_uint8.pb";
+const String config = "opencv_face_detector.pbtxt";
 
 int main(int argc, char* argv[])
 {
@@ -15,7 +24,7 @@ int main(int argc, char* argv[])
 
 	Run(iNumber);*/
 	
-	Stitching(argc, argv);
+	DnnFace();
 
 	return 0;
 }
@@ -1948,4 +1957,479 @@ void Stitching(int argc, char* argv[])
 	imshow("dst", dst);
 
 	waitKey();
+}
+
+void OnKChanged(int, void*)
+{
+	if (k_value < 1) k_value = 1;
+	TrainAndDisplay();
+}
+
+void AddPoint(const Point& pt, int cls)
+{
+	Mat new_sample = (Mat_<float>(1, 2) << pt.x, pt.y);
+	train.push_back(new_sample);
+
+	Mat new_label = (Mat_<int>(1, 1) << cls);
+	label.push_back(new_label);
+}
+
+void TrainAndDisplay()
+{
+	knn->train(train, ROW_SAMPLE, label);
+
+	for (int i = 0; i < g_img.rows; ++i) {
+		for (int j = 0; j < g_img.cols; ++j) {
+			Mat sample = (Mat_<float>(1, 2) << j, i);
+
+			Mat res;
+			knn->findNearest(sample, k_value, res);
+
+			int response = cvRound(res.at<float>(0, 0));
+			if (response == 0)
+				g_img.at<Vec3b>(i, j) = Vec3b(128, 128, 255); // R
+			else if (response == 1)
+				g_img.at<Vec3b>(i, j) = Vec3b(128, 255, 128); // G
+			else if (response == 2)
+				g_img.at<Vec3b>(i, j) = Vec3b(255, 128, 128); // B
+		}
+	}
+
+	for (int i = 0; i < train.rows; i++)
+	{
+		int x = cvRound(train.at<float>(i, 0));
+		int y = cvRound(train.at<float>(i, 1));
+		int l = label.at<int>(i, 0);
+
+		if (l == 0)
+		{
+			circle(g_img, Point(x, y), 5, Scalar(0, 0, 128), -1, LINE_AA);
+			cout << "circle red: " << Point(x, y) << endl;
+		}
+		else if (l == 1)
+			circle(g_img, Point(x, y), 5, Scalar(0, 128, 0), -1, LINE_AA);
+		else if (l == 2)
+			circle(g_img, Point(x, y), 5, Scalar(128, 0, 0), -1, LINE_AA);
+	}
+
+	imshow("knn", g_img);
+}
+
+void KnnPlane()
+{
+	g_img = Mat::zeros(Size(500, 500), CV_8UC3);
+	knn = KNearest::create();
+
+	namedWindow("knn");
+	createTrackbar("k", "knn", &k_value, 5, OnKChanged);
+
+	const int NUM = 30;
+	Mat rn(NUM, 2, CV_32SC1);
+
+	randn(rn, 0, 50);
+	for (int i = 0; i < NUM; i++)
+		AddPoint(Point(rn.at<int>(i, 0) + 150, rn.at<int>(i, 1) + 150), 0);
+
+	randn(rn, 0, 50);
+	for (int i = 0; i < NUM; i++)
+		AddPoint(Point(rn.at<int>(i, 0) + 350, rn.at<int>(i, 1) + 150), 1);
+
+	randn(rn, 0, 70);
+	for (int i = 0; i < NUM; i++)
+		AddPoint(Point(rn.at<int>(i, 0) + 250, rn.at<int>(i, 1) + 400), 2);
+
+	TrainAndDisplay();
+
+	waitKey();
+}
+
+Point ptPrev(-1, -1);
+
+void OnMouse3(int event, int x, int y, int flags, void* userdata)
+{
+	Mat img = *(Mat*)userdata;
+
+	if (event == EVENT_LBUTTONDOWN) {
+		ptPrev = Point(x, y);
+	}
+	else if (event == EVENT_LBUTTONUP) {
+		ptPrev = Point(-1, -1);
+	}
+	else if (event == EVENT_MOUSEMOVE && (flags & EVENT_FLAG_LBUTTON)) {
+		line(img, ptPrev, Point(x, y), Scalar::all(255), 40, LINE_AA, 0);
+		ptPrev = Point(x, y);
+
+		imshow("img", img);
+	}
+}
+
+Ptr<KNearest> TrainKnn()
+{
+	Mat digits = imread("digits.png", IMREAD_GRAYSCALE);
+
+	if (digits.empty()) {
+		cerr << "Image load failed!" << endl;
+		return 0;
+	}
+
+	Mat train_images, train_labels;
+
+	for (int j = 0; j < 50; j++) {
+		for (int i = 0; i < 100; i++) {
+			Mat roi, roi_float, roi_flatten;
+			roi = digits(Rect(i * 20, j * 20, 20, 20));
+			roi.convertTo(roi_float, CV_32F);
+			roi_flatten = roi_float.reshape(1, 1);
+
+			train_images.push_back(roi_flatten);
+			train_labels.push_back(j / 5);
+		}
+	}
+
+	Ptr<KNearest> knn = KNearest::create();
+	knn->train(train_images, ROW_SAMPLE, train_labels);
+
+	return knn;
+}
+
+void KnnDigits()
+{
+	Ptr<KNearest> knn = TrainKnn();
+
+	if (knn.empty()) {
+		cerr << "Training failed!" << endl;
+		return;
+	}
+
+	Mat img = Mat::zeros(400, 400, CV_8U);
+
+	imshow("img", img);
+	setMouseCallback("img", OnMouse3, (void*)&img);
+
+	while (true) {
+		int c = waitKey(0);
+
+		if (c == 27) {
+			break;
+		}
+		else if (c == ' ') {
+			Mat img_resize, img_float, img_flatten, res;
+
+			resize(img, img_resize, Size(20, 20), 0, 0, INTER_AREA);
+			img_resize.convertTo(img_float, CV_32F);
+			img_flatten = img_float.reshape(1, 1);
+
+			knn->findNearest(img_flatten, 3, res);
+			cout << cvRound(res.at<float>(0, 0)) << endl;
+
+			img.setTo(0);
+			imshow("img", img);
+		}
+	}
+}
+
+void SVMPlane()
+{
+	Mat train = Mat_<float>({ 8, 2 }, {
+		150, 200, 200, 250, 100, 250, 150, 300,
+		350, 100, 400, 200, 400, 300, 350, 400 });
+	Mat label = Mat_<int>({ 8, 1 }, { 0, 0, 0, 0, 1, 1, 1, 1 });
+
+	Ptr<SVM> svm = SVM::create();
+	svm->setType(SVM::C_SVC);
+	svm->setKernel(SVM::RBF);
+	svm->trainAuto(train, ROW_SAMPLE, label);
+
+	Mat img = Mat::zeros(Size(500, 500), CV_8UC3);
+
+	for (int j = 0; j < img.rows; j++) {
+		for (int i = 0; i < img.cols; i++) {
+			Mat test = Mat_<float>({ 1, 2 }, { (float)i, (float)j });
+			int res = cvRound(svm->predict(test));
+
+			if (res == 0)
+				img.at<Vec3b>(j, i) = Vec3b(128, 128, 255); // R
+			else
+				img.at<Vec3b>(j, i) = Vec3b(128, 255, 128); // G
+		}
+	}
+
+	for (int i = 0; i < train.rows; i++) {
+		int x = cvRound(train.at<float>(i, 0));
+		int y = cvRound(train.at<float>(i, 1));
+		int l = label.at<int>(i, 0);
+
+		if (l == 0)
+			circle(img, Point(x, y), 5, Scalar(0, 0, 128), -1, LINE_AA); // R
+		else
+			circle(img, Point(x, y), 5, Scalar(0, 128, 0), -1, LINE_AA); // G
+	}
+
+	imshow("svm", img);
+
+	waitKey();
+}
+
+Ptr<SVM> TrainHogSvm(const HOGDescriptor& hog)
+{
+	Mat digits = imread("digits.png", IMREAD_GRAYSCALE);
+
+	if (digits.empty()) {
+		cerr << "Image load failed!" << endl;
+		return 0;
+	}
+
+	Mat train_hog, train_labels;
+
+	for (int j = 0; j < 50; j++) {
+		for (int i = 0; i < 100; i++) {
+			Mat roi = digits(Rect(i * 20, j * 20, 20, 20));
+
+			vector<float> desc;
+			hog.compute(roi, desc);
+
+			Mat desc_mat(desc);
+			train_hog.push_back(desc_mat.t());
+			train_labels.push_back(j / 5);
+		}
+	}
+
+	Ptr<SVM> svm = SVM::create();
+	svm->setType(SVM::Types::C_SVC);
+	svm->setKernel(SVM::KernelTypes::RBF);
+	svm->setC(2.5);
+	svm->setGamma(0.50625);
+	svm->train(train_hog, ROW_SAMPLE, train_labels);
+
+	return svm;
+}
+
+void OnMouse4(int event, int x, int y, int flags, void* userdata)
+{
+	Mat img = *(Mat*)userdata;
+
+	if (event == EVENT_LBUTTONDOWN)
+		ptPrev = Point(x, y);
+	else if (event == EVENT_LBUTTONUP)
+		ptPrev = Point(-1, -1);
+	else if (event == EVENT_MOUSEMOVE && (flags & EVENT_FLAG_LBUTTON))
+	{
+		line(img, ptPrev, Point(x, y), Scalar::all(255), 40, LINE_AA, 0);
+		ptPrev = Point(x, y);
+
+		imshow("img", img);
+	}
+}
+
+void SVMDigits()
+{
+#if _DEBUG
+	cout << "svmdigit.exe should be built as Relase mode!" << endl;
+	return;
+#endif
+
+	HOGDescriptor hog(Size(20, 20), Size(10, 10), Size(5, 5), Size(5, 5), 9);
+
+	Ptr<SVM> svm = TrainHogSvm(hog);
+
+	if (svm.empty()) {
+		cerr << "Training failed!" << endl;
+		return;
+	}
+
+	Mat img = Mat::zeros(400, 400, CV_8U);
+
+	imshow("img", img);
+	setMouseCallback("img", OnMouse4, (void*)&img);
+
+	while (true) {
+		int c = waitKey();
+
+		if (c == 27) {
+			break;
+		}
+		else if (c == ' ') {
+			Mat img_resize;
+			resize(img, img_resize, Size(20, 20), 0, 0, INTER_AREA);
+
+			vector<float> desc;
+			hog.compute(img_resize, desc);
+
+			Mat desc_mat(desc);
+			int res = cvRound(svm->predict(desc_mat.t()));
+			cout << res << endl;
+
+			img.setTo(0);
+			imshow("img", img);
+		}
+	}
+}
+
+void OnMouse5(int event, int x, int y, int flags, void* userdata)
+{
+	Mat img = *(Mat*)userdata;
+
+	if (event == EVENT_LBUTTONDOWN) {
+		ptPrev = Point(x, y);
+	}
+	else if (event == EVENT_LBUTTONUP) {
+		ptPrev = Point(-1, -1);
+	}
+	else if (event == EVENT_MOUSEMOVE && (flags & EVENT_FLAG_LBUTTON)) {
+		line(img, ptPrev, Point(x, y), Scalar::all(255), 40, LINE_AA, 0);
+		ptPrev = Point(x, y);
+
+		imshow("img", img);
+	}
+}
+
+void DnnMnist()
+{
+	Net net = readNet("mnist_cnn.pb");
+
+	if (net.empty()) {
+		cerr << "Network load failed!" << endl;
+		return;
+	}
+
+	Mat img = Mat::zeros(400, 400, CV_8UC1);
+
+	imshow("img", img);
+	setMouseCallback("img", OnMouse5, (void*)&img);
+
+	while (true) {
+		int c = waitKey(0);
+
+		if (c == 27) {
+			break;
+		}
+		else if (c == ' ') {
+			Mat blob = blobFromImage(img, 1 / 255.f, Size(28, 28));
+			net.setInput(blob);
+			Mat prob = net.forward();
+
+			double maxVal;
+			Point maxLoc;
+			minMaxLoc(prob, NULL, &maxVal, NULL, &maxLoc);
+			int digit = maxLoc.x;
+
+			cout << digit << " (" << maxVal * 100 << "%)" << endl;
+
+			img.setTo(0);
+			imshow("img", img);
+		}
+	}
+}
+
+void Classify(int argc, char* argv[])
+{
+	// Load an image
+
+	Mat img;
+
+	if (argc < 2)
+		img = imread("space_shuttle.jpg", IMREAD_COLOR);
+	else
+		img = imread(argv[1], IMREAD_COLOR);
+
+	if (img.empty()) {
+		cerr << "Image load failed!" << endl;
+		return;
+	}
+
+	// Load network
+
+	Net net = readNet("bvlc_googlenet.caffemodel", "deploy.prototxt");
+
+	if (net.empty()) {
+		cerr << "Network load failed!" << endl;
+		return;
+	}
+
+	// Load class names
+
+	ifstream fp("classification_classes_ILSVRC2012.txt");
+
+	if (!fp.is_open()) {
+		cerr << "Class file load failed!" << endl;
+		return;
+	}
+
+	vector<String> classNames;
+	string name;
+	while (!fp.eof()) {
+		getline(fp, name);
+		if (name.length())
+			classNames.push_back(name);
+	}
+
+	fp.close();
+
+	// Inference
+
+	Mat inputBlob = blobFromImage(img, 1, Size(224, 224), Scalar(104, 117, 123));
+	net.setInput(inputBlob, "data");
+	Mat prob = net.forward();
+
+	// Check results & Display
+
+	double maxVal;
+	Point maxLoc;
+	minMaxLoc(prob, NULL, &maxVal, NULL, &maxLoc);
+
+	String str = format("%s (%4.2lf%%)", classNames[maxLoc.x].c_str(), maxVal * 100);
+	putText(img, str, Point(10, 30), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 0, 255));
+	imshow("img", img);
+
+	waitKey();
+}
+
+void DnnFace()
+{
+	VideoCapture cap(0);
+
+	if (!cap.isOpened()) {
+		cerr << "Camera open failed!" << endl;
+		return;
+	}
+
+	Net net = readNet(model, config);
+
+	if (net.empty()) {
+		cerr << "Net open failed!" << endl;
+		return;
+	}
+
+	Mat frame;
+	while (true) {
+		cap >> frame;
+		if (frame.empty())
+			break;
+
+		Mat blob = blobFromImage(frame, 1, Size(300, 300), Scalar(104, 177, 123));
+		net.setInput(blob);
+		Mat res = net.forward();
+
+		Mat detect(res.size[2], res.size[3], CV_32FC1, res.ptr<float>());
+
+		for (int i = 0; i < detect.rows; i++) {
+			float confidence = detect.at<float>(i, 2);
+			if (confidence < 0.5)
+				break;
+
+			int x1 = cvRound(detect.at<float>(i, 3) * frame.cols);
+			int y1 = cvRound(detect.at<float>(i, 4) * frame.rows);
+			int x2 = cvRound(detect.at<float>(i, 5) * frame.cols);
+			int y2 = cvRound(detect.at<float>(i, 6) * frame.rows);
+
+			rectangle(frame, Rect(Point(x1, y1), Point(x2, y2)), Scalar(0, 255, 0));
+
+			String label = format("Face: %4.3f", confidence);
+			putText(frame, label, Point(x1, y1 - 1), FONT_HERSHEY_SIMPLEX, 0.8, Scalar(0, 255, 0));
+		}
+
+		imshow("frame", frame);
+		if (waitKey(1) == 27)
+			break;
+	}
 }

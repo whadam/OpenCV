@@ -105,3 +105,22 @@ void KeypointMatching();
 void GoodMatching();
 void FindHomography();
 void Stitching(int argc, char* argv[]);
+
+// Machine Learning
+void OnKChanged(int, void*);
+void AddPoint(const Point& pt, int cls);
+void TrainAndDisplay();
+void KnnPlane();
+void OnMouse3(int event, int x, int y, int flags, void* userdata);
+Ptr<ml::KNearest> TrainKnn();
+void KnnDigits();
+void SVMPlane();
+Ptr<ml::SVM> TrainHogSvm(const HOGDescriptor& hog);
+void OnMouse4(int event, int x, int y, int flags, void* userdata);
+void SVMDigits();
+
+// Deep Learning
+void OnMouse5(int event, int x, int y, int flags, void* userdata);
+void DnnMnist();
+void Classify(int argc, char* argv[]);
+void DnnFace();
